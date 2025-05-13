@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Ollama Camera Interaction</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+      padding: 20px;
+      background-color: #f0f0f0;
+    }
+    .controls, .io-areas {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      background-color: #fff;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    .io-areas {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    textarea {
+      width: 300px;
+      height: 80px;
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    #videoFeed {
+      width: 480px;
+      height: 360px;
+      border: 2px solid #333;
+      background-color: #000;
+      border-radius: 8px;
+    }
+    #startButton {
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+      border: none;
+      border-radius: 4px;
+      color: white;
+    }
+    #startButton.start {
+      background-color: #28a745;
+    }
+    #startButton.stop {
+      background-color: #dc3545;
+    }
+    label {
+      font-weight: bold;
+    }
+    select {
+      padding: 8px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+    }
+    .hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Camera Interaction with Ollama (llama3:2.1b)</h1>
+
+  <video id="videoFeed" autoplay playsinline></video>
+  <canvas id="canvas" class="hidden"></canvas>
+
+  <div class="io-areas">
+    <div>
+      <label for="instructionText">Instruction:</label><br>
+      <textarea id="instructionText" style="height: 2em; width: 40em" name="Instruction">Describe the scene.</textarea>
+    </div>
+    <div>
+      <label for="responseText">Response:</label><br>
+      <textarea id="responseText" style="height: 2em; width: 40em" name="Response" readonly placeholder="Ollama response will appear here..."></textarea>
+    </div>
+  </div>
+
+  <div class="controls">
+    <label for="intervalSelect">Interval between 2 requests:</label>
+    <select id="intervalSelect">
+      <option value="100">100ms</option>
+      <option value="250">250ms</option>
+      <option value="500" selected>500ms</option>
+      <option value="1000">1s</option>
+      <option value="2000">2s</option>
+    </select>
+    <button id="startButton" class="start">Start</button>
+  </div>
+
+  <script>
+    const video = document.getElementById('videoFeed');
+    const canvas = document.getElementById('canvas');
+    const instructionText = document.getElementById('instructionText');
+    const responseText = document.getElementById('responseText');
+    const intervalSelect = document.getElementById('intervalSelect');
+    const startButton = document.getElementById('startButton');
+
+    let stream;
+    let intervalId;
+    let isProcessing = false;
+
+    async function initCamera() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        video.srcObject = stream;
+        responseText.value = "Camera access granted.";
+      } catch (err) {
+        console.error("Camera error:", err);
+        responseText.value = `Camera error: ${err.message}`;
+        alert("Camera access denied. Please allow access and use localhost or HTTPS.");
+      }
+    }
+
+    function captureImage() {
+      if (!stream || !video.videoWidth) return null;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/jpeg', 0.7);
+    }
+
+    async function sendToOllama(prompt) {
+      const response = await fetch("http://localhost:11434/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "llama3:2.1b",
+          prompt: prompt,
+          stream: false
+        })
+      });
+      const data = await response.json();
+      return data.response || "No response from Ollama.";
+    }
+
+    async function sendData() {
+      if (!isProcessing) return;
+
+      const imageBase64 = captureImage();
+      if (!imageBase64) {
+        responseText.value = "Could not capture image.";
+        return;
+      }
+
+      const prompt = `${instructionText.value}\n[Note: A webcam image was captured but not processed. This is a placeholder for future vision processing.]`;
+
+      try {
+        const response = await sendToOllama(prompt);
+        responseText.value = response;
+      } catch (err) {
+        console.error("Error from Ollama:", err);
+        responseText.value = "Failed to get response from Ollama.";
+      }
+    }
+
+    function handleStart() {
+      if (!stream) {
+        responseText.value = "Camera not ready.";
+        return;
+      }
+      isProcessing = true;
+      startButton.textContent = "Stop";
+      startButton.classList.remove('start');
+      startButton.classList.add('stop');
+      instructionText.disabled = true;
+      intervalSelect.disabled = true;
+      responseText.value = "Started...";
+      const intervalMs = parseInt(intervalSelect.value, 10);
+      sendData();
+      intervalId = setInterval(sendData, intervalMs);
+    }
+
+    function handleStop() {
+      isProcessing = false;
+      if (intervalId) clearInterval(intervalId);
+      startButton.textContent = "Start";
+      startButton.classList.remove('stop');
+      startButton.classList.add('start');
+      instructionText.disabled = false;
+      intervalSelect.disabled = false;
+      responseText.value = "Stopped.";
+    }
+
+    startButton.addEventListener('click', () => {
+      isProcessing ? handleStop() : handleStart();
+    });
+
+    window.addEventListener('DOMContentLoaded', initCamera);
+    window.addEventListener('beforeunload', () => {
+      if (stream) stream.getTracks().forEach(track => track.stop());
+      if (intervalId) clearInterval(intervalId);
+    });
+  </script>
+</body>
+</html>
