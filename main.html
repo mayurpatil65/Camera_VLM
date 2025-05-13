@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Ollama Camera Interaction</title>
+  <title>Ollama LLaVA Camera App</title>
   <style>
     body {
       font-family: sans-serif;
@@ -71,7 +71,7 @@
 </head>
 <body>
 
-  <h1>Camera Interaction with Local Ollama Models</h1>
+  <h1>Camera Interaction with Ollama + LLaVA</h1>
 
   <video id="videoFeed" autoplay playsinline></video>
   <canvas id="canvas" class="hidden"></canvas>
@@ -79,11 +79,11 @@
   <div class="io-areas">
     <div>
       <label for="instructionText">Instruction:</label><br>
-      <textarea id="instructionText" style="height: 2em; width: 40em" name="Instruction">Describe the scene.</textarea>
+      <textarea id="instructionText" style="height: 2em; width: 40em" name="Instruction">What do you see?</textarea>
     </div>
     <div>
       <label for="responseText">Response:</label><br>
-      <textarea id="responseText" style="height: 2em; width: 40em" name="Response" readonly placeholder="Ollama response will appear here..."></textarea>
+      <textarea id="responseText" style="height: 2em; width: 40em" name="Response" readonly placeholder="LLaVA response will appear here..."></textarea>
     </div>
   </div>
 
@@ -123,46 +123,54 @@
       }
     }
 
-    function captureImage() {
+    function captureImageBase64() {
       if (!stream || !video.videoWidth) return null;
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      return canvas.toDataURL('image/jpeg', 0.7);
+      const fullData = canvas.toDataURL("image/jpeg", 0.8);
+      return fullData.split(',')[1]; // strip "data:image/jpeg;base64,"
     }
 
-    async function sendToOllama(prompt) {
+    async function sendToOllama(prompt, base64Image) {
       const response = await fetch("http://localhost:11434/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "llama3:2.1b",
+          model: "llava",
           prompt: prompt,
+          images: [base64Image],
           stream: false
         })
       });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Error ${response.status}: ${text}`);
+      }
+
       const data = await response.json();
-      return data.response || "No response from Ollama.";
+      return data.response || "No response.";
     }
 
     async function sendData() {
       if (!isProcessing) return;
 
-      const imageBase64 = captureImage();
-      if (!imageBase64) {
+      const base64Image = captureImageBase64();
+      if (!base64Image) {
         responseText.value = "Could not capture image.";
         return;
       }
 
-      const prompt = `${instructionText.value}\n[Note: A webcam image was captured but not processed. This is a placeholder for future vision processing.]`;
+      const prompt = instructionText.value;
 
       try {
-        const response = await sendToOllama(prompt);
-        responseText.value = response;
+        const result = await sendToOllama(prompt, base64Image);
+        responseText.value = result;
       } catch (err) {
-        console.error("Error from Ollama:", err);
-        responseText.value = "Failed to get response from Ollama.";
+        console.error("Ollama error:", err);
+        responseText.value = `Failed: ${err.message}`;
       }
     }
 
